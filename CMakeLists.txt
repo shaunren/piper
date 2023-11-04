@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.13)
 
 project(piper C CXX)
 
-file(READ "${CMAKE_CURRENT_LIST_DIR}/VERSION" piper_version)
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/VERSION" piper_version)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,8 +17,10 @@ elseif(NOT APPLE)
   string(APPEND CMAKE_C_FLAGS " -Wall -Wextra")
 endif()
 
-add_executable(piper src/cpp/main.cpp src/cpp/piper.cpp)
-add_executable(test_piper src/cpp/test.cpp src/cpp/piper.cpp)
+add_library(piper SHARED src/cpp/piper.cpp src/cpp/piper_c.cpp)
+
+add_executable(piper_exe src/cpp/main.cpp)
+add_executable(test_piper src/cpp/test.cpp)
 
 # NOTE: external project prefix are shortened because of path length restrictions on Windows
 # NOTE: onnxruntime is pulled from piper-phonemize
@@ -63,7 +65,7 @@ if(NOT DEFINED PIPER_PHONEMIZE_DIR)
   ExternalProject_Add(
     piper_phonemize_external
     PREFIX "${CMAKE_CURRENT_BINARY_DIR}/p"
-    URL "https://github.com/rhasspy/piper-phonemize/archive/refs/heads/master.zip"
+    URL "https://github.com/shaunren/piper-phonemize/archive/refs/heads/pic.zip"
     CMAKE_ARGS -DCMAKE_INSTALL_PREFIX:PATH=${PIPER_PHONEMIZE_DIR}
   )
   add_dependencies(piper piper_phonemize_external)
@@ -76,12 +78,12 @@ if((NOT MSVC) AND (NOT APPLE))
   # Linux flags
   string(APPEND CMAKE_CXX_FLAGS " -Wall -Wextra -Wl,-rpath,'$ORIGIN'")
   string(APPEND CMAKE_C_FLAGS " -Wall -Wextra")
-  target_link_libraries(piper -static-libgcc -static-libstdc++)
+  target_link_libraries(piper_exe -static-libgcc -static-libstdc++)
 
   set(PIPER_EXTRA_LIBRARIES "pthread")
 endif()
 
-target_link_libraries(piper
+target_link_libraries(piper PRIVATE
   fmt
   spdlog
   espeak-ng
@@ -103,6 +105,12 @@ target_include_directories(piper PUBLIC
 )
 
 target_compile_definitions(piper PUBLIC _PIPER_VERSION=${piper_version})
+
+target_link_libraries(piper_exe piper ${PIPER_EXTRA_LIBRARIES})
+
+if(NOT WIN32)
+  set_target_properties(piper_exe PROPERTIES OUTPUT_NAME piper)
+endif()
 
 # ---- Declare test ----
 include(CTest)
@@ -131,9 +139,7 @@ target_link_directories(
 target_link_libraries(test_piper PUBLIC
   fmt
   spdlog
-  espeak-ng
-  piper_phonemize
-  onnxruntime
+  piper
 )
 
 # ---- Declare install targets ----
@@ -141,6 +147,14 @@ target_link_libraries(test_piper PUBLIC
 install(
   TARGETS piper
   DESTINATION ${CMAKE_INSTALL_PREFIX})
+
+install(
+  TARGETS piper_exe
+  DESTINATION ${CMAKE_INSTALL_PREFIX})
+
+install(
+  FILES src/cpp/piper.hpp src/cpp/piper_c.h
+  DESTINATION ${CMAKE_INSTALL_PREFIX}/include/piper)
 
 # Dependencies
 install(

@@ -8,13 +8,39 @@
 #include <espeak-ng/speak_lib.h>
 #include <onnxruntime_cxx_api.h>
 #include <spdlog/spdlog.h>
+#include <piper-phonemize/tashkeel.hpp>
 
 #include "json.hpp"
 #include "piper.hpp"
 #include "utf8.h"
 #include "wavfile.hpp"
 
+using json = nlohmann::json;
+
 namespace piper {
+
+struct TashkeelState : tashkeel::State {};
+
+PiperConfig::PiperConfig() = default;
+PiperConfig::~PiperConfig() = default;
+
+struct ModelSession {
+  Ort::Session onnx;
+  Ort::AllocatorWithDefaultOptions allocator;
+  Ort::SessionOptions options;
+  Ort::Env env;
+
+  ModelSession() : onnx(nullptr){};
+};
+
+struct VoiceData {
+  json configRoot;
+  ModelSession session;
+};
+
+Voice::Voice() : data(new VoiceData()) {};
+Voice::~Voice() = default;
+
 
 #ifdef _PIPER_VERSION
 // https://stackoverflow.com/questions/47346133/how-to-use-a-define-inside-a-format-string
@@ -220,7 +246,7 @@ void initialize(PiperConfig &config) {
     spdlog::debug("Initializing eSpeak");
     int result = espeak_Initialize(AUDIO_OUTPUT_SYNCHRONOUS,
                                    /*buflength*/ 0,
-                                   /*path*/ config.eSpeakDataPath.c_str(),
+                                   /*path*/ config.eSpeakDataPath.empty() ? nullptr : config.eSpeakDataPath.c_str(),
                                    /*options*/ 0);
     if (result < 0) {
       throw std::runtime_error("Failed to initialize eSpeak-ng");
@@ -239,7 +265,7 @@ void initialize(PiperConfig &config) {
 
     spdlog::debug("Loading libtashkeel model from {}",
                   config.tashkeelModelPath.value());
-    config.tashkeelState = std::make_unique<tashkeel::State>();
+    config.tashkeelState = std::make_unique<TashkeelState>();
     tashkeel::tashkeel_load(config.tashkeelModelPath.value(),
                             *config.tashkeelState);
     spdlog::debug("Initialized libtashkeel");
@@ -311,11 +337,11 @@ void loadVoice(PiperConfig &config, std::string modelPath,
                std::optional<SpeakerId> &speakerId, bool useCuda) {
   spdlog::debug("Parsing voice config at {}", modelConfigPath);
   std::ifstream modelConfigFile(modelConfigPath);
-  voice.configRoot = json::parse(modelConfigFile);
+  voice.data->configRoot = json::parse(modelConfigFile);
 
-  parsePhonemizeConfig(voice.configRoot, voice.phonemizeConfig);
-  parseSynthesisConfig(voice.configRoot, voice.synthesisConfig);
-  parseModelConfig(voice.configRoot, voice.modelConfig);
+  parsePhonemizeConfig(voice.data->configRoot, voice.phonemizeConfig);
+  parseSynthesisConfig(voice.data->configRoot, voice.synthesisConfig);
+  parseModelConfig(voice.data->configRoot, voice.modelConfig);
 
   if (voice.modelConfig.numSpeakers > 1) {
     // Multi-speaker model
@@ -329,8 +355,7 @@ void loadVoice(PiperConfig &config, std::string modelPath,
 
   spdlog::debug("Voice contains {} speaker(s)", voice.modelConfig.numSpeakers);
 
-  loadModel(modelPath, voice.session, useCuda);
-
+  loadModel(modelPath, voice.data->session, useCuda);
 } /* loadVoice */
 
 // Phoneme ids to WAV audio
@@ -445,7 +470,7 @@ void synthesize(std::vector<PhonemeId> &phonemeIds,
 // Phonemize text and synthesize audio
 void textToAudio(PiperConfig &config, Voice &voice, std::string text,
                  std::vector<int16_t> &audioBuffer, SynthesisResult &result,
-                 const std::function<void()> &audioCallback) {
+                 const std::function<bool()> &audioCallback) {
 
   std::size_t sentenceSilenceSamples = 0;
   if (voice.synthesisConfig.sentenceSilenceSeconds > 0) {
@@ -567,8 +592,8 @@ void textToAudio(PiperConfig &config, Voice &voice, std::string text,
       }
 
       // ids -> audio
-      synthesize(phonemeIds, voice.synthesisConfig, voice.session, audioBuffer,
-                 phraseResults[phraseIdx]);
+      synthesize(phonemeIds, voice.synthesisConfig, voice.data->session,
+                 audioBuffer, phraseResults[phraseIdx]);
 
       // Add end of phrase silence
       for (std::size_t i = 0; i < phraseSilenceSamples[phraseIdx]; i++) {
@@ -590,7 +615,8 @@ void textToAudio(PiperConfig &config, Voice &voice, std::string text,
 
     if (audioCallback) {
       // Call back must copy audio since it is cleared afterwards.
-      audioCallback();
+      if (!audioCallback())
+          break;
       audioBuffer.clear();
     }
 

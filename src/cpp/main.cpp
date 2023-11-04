@@ -12,6 +12,8 @@
 #include <thread>
 #include <vector>
 
+#include <unistd.h>
+
 #ifdef _MSC_VER
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -100,8 +102,11 @@ void rawOutputProc(vector<int16_t> &sharedAudioBuffer, mutex &mutAudio,
 int main(int argc, char *argv[]) {
   spdlog::set_default_logger(spdlog::stderr_color_st("piper"));
 
+  cout << "cwd: " << get_current_dir_name() << endl;
+
   RunConfig runConfig;
   parseArgs(argc, argv, runConfig);
+
 
 #ifdef _WIN32
   // Required on Windows to show IPA symbols
@@ -334,6 +339,7 @@ int main(int argc, char *argv[]) {
                back_inserter(sharedAudioBuffer));
           audioReady = true;
           cvAudio.notify_one();
+          return true;
         }
       };
       piper::textToAudio(piperConfig, voice, line, audioBuffer, result,

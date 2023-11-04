@@ -8,14 +8,8 @@
 #include <string>
 #include <vector>
 
-#include <onnxruntime_cxx_api.h>
 #include <piper-phonemize/phoneme_ids.hpp>
 #include <piper-phonemize/phonemize.hpp>
-#include <piper-phonemize/tashkeel.hpp>
-
-#include "json.hpp"
-
-using json = nlohmann::json;
 
 namespace piper {
 
@@ -25,13 +19,18 @@ struct eSpeakConfig {
   std::string voice = "en-us";
 };
 
+struct TashkeelState;
+
 struct PiperConfig {
+  PiperConfig();
+  ~PiperConfig();
+
   std::string eSpeakDataPath;
   bool useESpeak = true;
 
   bool useTashkeel = false;
   std::optional<std::string> tashkeelModelPath;
-  std::unique_ptr<tashkeel::State> tashkeelState;
+  std::unique_ptr<TashkeelState> tashkeelState;
 };
 
 enum PhonemeType { eSpeakPhonemes, TextPhonemes };
@@ -75,27 +74,23 @@ struct ModelConfig {
   std::optional<std::map<std::string, SpeakerId>> speakerIdMap;
 };
 
-struct ModelSession {
-  Ort::Session onnx;
-  Ort::AllocatorWithDefaultOptions allocator;
-  Ort::SessionOptions options;
-  Ort::Env env;
-
-  ModelSession() : onnx(nullptr){};
-};
-
 struct SynthesisResult {
   double inferSeconds;
   double audioSeconds;
   double realTimeFactor;
 };
 
+
+struct VoiceData;
+
 struct Voice {
-  json configRoot;
+  Voice();
+  ~Voice();
+
   PhonemizeConfig phonemizeConfig;
   SynthesisConfig synthesisConfig;
   ModelConfig modelConfig;
-  ModelSession session;
+  std::unique_ptr<VoiceData> data;
 };
 
 // True if the string is a single UTF-8 codepoint
@@ -121,7 +116,7 @@ void loadVoice(PiperConfig &config, std::string modelPath,
 // Phonemize text and synthesize audio
 void textToAudio(PiperConfig &config, Voice &voice, std::string text,
                  std::vector<int16_t> &audioBuffer, SynthesisResult &result,
-                 const std::function<void()> &audioCallback);
+                 const std::function<bool()> &audioCallback);
 
 // Phonemize text and synthesize audio to WAV file
 void textToWavFile(PiperConfig &config, Voice &voice, std::string text,
